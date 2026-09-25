@@ -284,7 +284,7 @@ cmd_prune() {
 storage_hint() {
     local err="$1"
     if grep -q "SignatureDoesNotMatch" "$err"; then
-        warn "A chave SECRETA (STORAGE_SECRET_ACCESS_KEY) não confere com a access key. Confira se foi copiada inteira (40 caracteres), sem espaço/aspas, e se é do mesmo par do STORAGE_ACCESS_KEY_ID."
+        warn "A chave SECRETA (STORAGE_SECRET_ACCESS_KEY) não confere com a access key. Confira se foi copiada inteira (40 caracteres), sem espaço/aspas, e se é do mesmo par do STORAGE_ACCESS_KEY_ID. Compare a 'impressão' da linha 'Credencial' com a da sua chave: printf %s 'CHAVE' | sha256sum | cut -c1-8"
     elif grep -q "InvalidAccessKeyId" "$err"; then
         warn "STORAGE_ACCESS_KEY_ID não existe (ou foi desativada) nesta conta."
     elif grep -q "AccessDenied" "$err"; then
@@ -306,6 +306,7 @@ cmd_check() {
     psql -X -At -d postgres -c "SELECT 'servidor: ' || version()" | sed 's/^/  /' || die "não conectou no Postgres"
     log "Bancos: $(list_databases | tr '\n' ' ')"
     log "Armazenamento: $STORAGE_PROVIDER -> $(base_remote) ${STORAGE_CLASS:+(classe $STORAGE_CLASS)}"
+    [ -z "${STORAGE_KEY_INFO:-}" ] || log "Credencial: $STORAGE_KEY_INFO"
     local probe="$WORK_DIR/.arca-check"
     date > "$probe"
     if ! upload "$probe" "$(base_remote)/.arca-check" 2> "$WORK_DIR/upload.err"; then
