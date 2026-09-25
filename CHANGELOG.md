@@ -2,6 +2,12 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.0.3] - 2026-09-25
+
+### Melhorado
+- `check` mostra a credencial recebida sem expô-la: final da access key, tamanho da chave secreta e uma impressão (sha256, 8 caracteres) para comparar com a chave original.
+- Access key sem a chave secreta (ou o contrário) é recusada com uma mensagem clara, em vez de virar `SignatureDoesNotMatch`.
+
 ## [1.0.2] - 2026-09-25
 
 ### Corrigido

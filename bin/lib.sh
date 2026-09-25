@@ -46,6 +46,8 @@ clean_key() {
     printf '%s' "$value"
 }
 
+fingerprint() { printf '%s' "$1" | { sha256sum 2> /dev/null || shasum -a 256; } | cut -c1-8; }
+
 is_true() { case "${1:-}" in true | TRUE | True | 1 | yes | sim) return 0 ;; *) return 1 ;; esac }
 
 # ------------------------------------------------------------------ Postgres
@@ -111,7 +113,19 @@ setup_storage() {
             export RCLONE_CONFIG_ARCA_TYPE=s3
             # O bucket já existe: não pede permissão de criar/listar buckets (credencial mínima).
             export RCLONE_CONFIG_ARCA_NO_CHECK_BUCKET=true
+            if [ -n "$key" ] && [ -z "$secret" ]; then
+                die "STORAGE_ACCESS_KEY_ID definida, mas STORAGE_SECRET_ACCESS_KEY chegou VAZIA ao container (confira o nome da variável e a ligação \${...} no stack)"
+            fi
+            if [ -z "$key" ] && [ -n "$secret" ]; then
+                die "STORAGE_SECRET_ACCESS_KEY definida, mas STORAGE_ACCESS_KEY_ID chegou VAZIA ao container"
+            fi
+            # shellcheck disable=SC2034 # usada pelo comando check (bin/arca)
+            STORAGE_KEY_INFO=""
             if [ -n "$key" ]; then
+                # Diagnóstico sem expor nada: final da access key (identificador, não é segredo),
+                # tamanho da secreta e os 8 primeiros caracteres do sha256 dela.
+                # shellcheck disable=SC2034
+                STORAGE_KEY_INFO="access key ...${key: -4} (${#key} caracteres); chave secreta com ${#secret} caracteres, impressão $(fingerprint "$secret")"
                 export RCLONE_CONFIG_ARCA_ACCESS_KEY_ID="$key"
                 export RCLONE_CONFIG_ARCA_SECRET_ACCESS_KEY="$secret"
             else
