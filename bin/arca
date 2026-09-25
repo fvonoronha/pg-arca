@@ -2,9 +2,15 @@
 # arca - backup de PostgreSQL para qualquer armazenamento (AWS S3, Cloudflare R2, compatíveis com
 # S3, disco local ou qualquer serviço do rclone). Uso: arca <comando> [opções]. Ver `arca help`.
 
-ARCA_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Pasta real do script, mesmo quando chamado por um link (ex.: /usr/local/bin/arca).
+ARCA_SELF="${BASH_SOURCE[0]}"
+while [ -L "$ARCA_SELF" ]; do
+    ARCA_LINK="$(readlink "$ARCA_SELF")"
+    case "$ARCA_LINK" in /*) ARCA_SELF="$ARCA_LINK" ;; *) ARCA_SELF="$(dirname "$ARCA_SELF")/$ARCA_LINK" ;; esac
+done
+ARCA_HOME="$(cd "$(dirname "$ARCA_SELF")" && pwd)"
 # shellcheck source-path=SCRIPTDIR source=lib.sh
-. "$ARCA_HOME/lib.sh"
+. "$ARCA_HOME/lib.sh" || { echo "arca: não encontrei $ARCA_HOME/lib.sh" >&2; exit 1; }
 
 usage() {
     cat <<'EOF'
