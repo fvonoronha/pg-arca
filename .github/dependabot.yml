@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    ignore:
+      # A versão maior do Postgres vem do build-arg PG_MAJOR (uma imagem por versão).
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
