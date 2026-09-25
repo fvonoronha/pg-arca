@@ -20,7 +20,9 @@ PASS=0
 cleanup() {
     docker rm -f "$PG" "$S3" "$CRON" > /dev/null 2>&1 || true
     docker network rm "$NET" > /dev/null 2>&1 || true
-    rm -rf "$WORK"
+    # Os arquivos do armazenamento local foram criados pelo root do container.
+    docker run --rm -v "$WORK:/work" --entrypoint rm "$IMAGE" -rf /work/storage > /dev/null 2>&1 || true
+    rm -rf "$WORK" || true
 }
 trap cleanup EXIT
 
