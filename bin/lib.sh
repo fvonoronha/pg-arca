@@ -157,6 +157,11 @@ setup_storage() {
 
 rc() { rclone --retries 5 --low-level-retries 10 --stats 0 "$@"; }
 
+# Envio de um arquivo novo. --no-check-dest: não pergunta antes se o destino já existe (os nomes
+# têm data e hora). Numa credencial de IAM mínima (ListBucket só dentro do prefixo), a AWS
+# responde 403 em vez de 404 para essa pergunta, e o envio falhava.
+upload() { rc copyto --no-check-dest "$1" "$2"; }
+
 # ------------------------------------------------------------------ criptografia (age)
 
 # Chave(s) pública(s) age: só cifram. A chave privada NÃO fica no servidor; é usada só na

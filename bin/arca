@@ -53,7 +53,7 @@ dump_database() {
     local size
     size="$(wc -c < "$file" | tr -d ' ')"
     [ "$size" -gt 0 ] || { warn "o arquivo de $db saiu vazio"; return 1; }
-    rc copyto "$file" "$(base_remote)/$db/$(basename "$file")" || { warn "envio de $db falhou"; return 1; }
+    upload "$file" "$(base_remote)/$db/$(basename "$file")" || { warn "envio de $db falhou"; return 1; }
     log "  $db: $(human_size "$size") enviado ($(basename "$file"))"
     rm -f "$file"
 }
@@ -67,7 +67,7 @@ dump_globals() {
         rm -f "$file"
         file="$file.age"
     fi
-    rc copyto "$file" "$(base_remote)/_globals/$(basename "$file")" || return 1
+    upload "$file" "$(base_remote)/_globals/$(basename "$file")" || return 1
     log "  papéis e configurações globais: enviado ($(basename "$file"))"
     rm -f "$file"
 }
@@ -290,7 +290,7 @@ cmd_check() {
     log "Armazenamento: $STORAGE_PROVIDER -> $(base_remote) ${STORAGE_CLASS:+(classe $STORAGE_CLASS)}"
     local probe="$WORK_DIR/.arca-check"
     date > "$probe"
-    rc copyto "$probe" "$(base_remote)/.arca-check" || die "não consegui GRAVAR no armazenamento"
+    upload "$probe" "$(base_remote)/.arca-check" || die "não consegui GRAVAR no armazenamento"
     rc cat "$(base_remote)/.arca-check" > /dev/null || die "não consegui LER do armazenamento"
     rc deletefile "$(base_remote)/.arca-check" || warn "não consegui apagar o arquivo de teste (credencial sem permissão de apagar? tudo bem se a retenção for por regra do bucket)"
     if encryption_enabled; then
