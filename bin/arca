@@ -1,0 +1,335 @@
+#!/usr/bin/env bash
+# arca - backup de PostgreSQL para qualquer armazenamento (AWS S3, Cloudflare R2, compatíveis com
+# S3, disco local ou qualquer serviço do rclone). Uso: arca <comando> [opções]. Ver `arca help`.
+
+ARCA_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source-path=SCRIPTDIR source=lib.sh
+. "$ARCA_HOME/lib.sh"
+
+usage() {
+    cat <<'EOF'
+arca - backup de PostgreSQL para qualquer armazenamento
+
+Comandos:
+  backup                         Faz o backup agora (todos os bancos de BACKUP_DATABASES).
+  list [banco]                   Lista os backups guardados.
+  restore <banco> [arquivo|latest] [--into <destino>] [--yes]
+                                 Restaura um backup (padrão: o mais recente) no banco <destino>
+                                 (padrão: o mesmo nome). Sobrescrever um banco que já existe
+                                 exige --yes. Tudo numa transação: ou restaura inteiro ou nada.
+  verify [banco] [--full]        Baixa o backup mais recente e confere se ele abre (e decifra).
+                                 --full restaura num banco temporário e apaga depois.
+  prune                          Apaga backups mais velhos que BACKUP_RETENTION_DAYS (mantendo
+                                 sempre os BACKUP_KEEP_MIN mais novos de cada banco).
+  check                          Confere a configuração, o acesso ao banco e ao armazenamento.
+  cron                           Agenda o backup (BACKUP_SCHEDULE) e fica rodando (padrão do container).
+  help                           Esta ajuda.
+EOF
+}
+
+timestamp() { date -u +%Y%m%dT%H%M%SZ; }
+base_remote() { printf '%s/%s' "$REMOTE" "$BACKUP_NAME"; }
+
+# ------------------------------------------------------------------ backup
+
+dump_database() {
+    local db="$1" ts="$2" file
+    file="$WORK_DIR/${db}_${ts}.dump"
+    # shellcheck disable=SC2086 # PG_DUMP_EXTRA_ARGS é uma lista de opções
+    if encryption_enabled; then
+        file="$file.age"
+        pg_dump --format=custom --compress="$BACKUP_COMPRESSION" $PG_DUMP_EXTRA_ARGS --dbname="$db" | encrypt_stream > "$file" ||
+            { warn "pg_dump/age falhou em $db"; return 1; }
+    else
+        pg_dump --format=custom --compress="$BACKUP_COMPRESSION" $PG_DUMP_EXTRA_ARGS --dbname="$db" --file="$file" ||
+            { warn "pg_dump falhou em $db"; return 1; }
+    fi
+    local size
+    size="$(wc -c < "$file" | tr -d ' ')"
+    [ "$size" -gt 0 ] || { warn "o arquivo de $db saiu vazio"; return 1; }
+    rc copyto "$file" "$(base_remote)/$db/$(basename "$file")" || { warn "envio de $db falhou"; return 1; }
+    log "  $db: $(human_size "$size") enviado ($(basename "$file"))"
+    rm -f "$file"
+}
+
+dump_globals() {
+    local ts="$1" file
+    file="$WORK_DIR/globals_${ts}.sql.gz"
+    pg_dumpall --globals-only | gzip -6 > "$file" || return 1
+    if encryption_enabled; then
+        encrypt_stream < "$file" > "$file.age" || return 1
+        rm -f "$file"
+        file="$file.age"
+    fi
+    rc copyto "$file" "$(base_remote)/_globals/$(basename "$file")" || return 1
+    log "  papéis e configurações globais: enviado ($(basename "$file"))"
+    rm -f "$file"
+}
+
+cmd_backup() {
+    setup_storage
+    new_work_dir
+    acquire_lock
+    local ts started failures=0 total=0 db
+    ts="$(timestamp)"
+    started="$(date +%s)"
+
+    if ! encryption_enabled; then
+        warn "backups SEM criptografia (defina BACKUP_ENCRYPTION_RECIPIENTS)"
+    fi
+    log "Backup $ts de $PGUSER@$PGHOST:$PGPORT -> $(base_remote) ${STORAGE_CLASS:+(classe $STORAGE_CLASS)}"
+
+    local databases
+    databases="$(list_databases)" || {
+        notify down "arca: não conectou em $PGHOST"
+        die "não foi possível listar os bancos em $PGHOST:$PGPORT"
+    }
+    [ -n "$databases" ] || die "nenhum banco para copiar"
+
+    for db in $databases; do
+        total=$((total + 1))
+        # Um banco com problema não impede os outros.
+        if ! (dump_database "$db" "$ts"); then
+            failures=$((failures + 1))
+            warn "falha no backup de $db"
+        fi
+    done
+
+    if is_true "$BACKUP_GLOBALS"; then
+        (dump_globals "$ts") || warn "não foi possível copiar papéis/globais (precisa de superusuário; use BACKUP_GLOBALS=false para pular)"
+    fi
+
+    local elapsed=$(($(date +%s) - started))
+    if [ "$failures" -gt 0 ]; then
+        notify down "arca: $failures de $total banco(s) falharam"
+        die "backup terminou com $failures falha(s) de $total banco(s) em ${elapsed}s"
+    fi
+
+    if [ "${BACKUP_RETENTION_DAYS:-0}" -gt 0 ] 2>/dev/null; then
+        (prune_old) || warn "falha ao apagar backups antigos"
+    fi
+
+    log "Backup concluído: $total banco(s) em ${elapsed}s"
+    notify up "arca: $total banco(s) em ${elapsed}s"
+}
+
+# ------------------------------------------------------------------ list
+
+cmd_list() {
+    setup_storage
+    local filter="${1:-}" path
+    [ -z "$filter" ] || require_name "$filter"
+    path="$(base_remote)${filter:+/$filter}"
+    log "Backups em $path"
+    # tamanho, data, caminho (mais recentes por último)
+    rc lsl "$path" 2>/dev/null | awk '{ printf "%10s  %s %s  %s\n", $1, $2, substr($3, 1, 8), $4 }' | sort -k4 || true
+}
+
+# ------------------------------------------------------------------ obter um backup
+
+# Caminho relativo (a partir de base_remote) do arquivo mais recente de um banco.
+latest_of() {
+    local db="$1" name
+    name="$(rc lsf --files-only "$(base_remote)/$db" 2>/dev/null | grep "^${db}_.*\.dump" | sort | tail -n 1 || true)"
+    [ -n "$name" ] || die "nenhum backup de $db em $(base_remote)/$db"
+    printf '%s/%s' "$db" "$name"
+}
+
+# Baixa (e decifra, se preciso) um backup; imprime o caminho local do .dump.
+fetch_backup() {
+    local db="$1" which="${2:-latest}" rel local_file
+    if [ "$which" = "latest" ]; then
+        rel="$(latest_of "$db")" || return 1
+    else
+        rel="$db/$(basename "$which")"
+    fi
+    local_file="$WORK_DIR/$(basename "$rel")"
+    log "Baixando $rel" >&2
+    rc copyto "$(base_remote)/$rel" "$local_file" >&2 || die "não consegui baixar $rel"
+    case "$local_file" in
+        *.age)
+            log "Decifrando" >&2
+            local identity
+            identity="$(identity_file)" || return 1
+            age --decrypt -i "$identity" -o "${local_file%.age}" "$local_file" || die "não consegui decifrar $rel (chave privada errada?)"
+            rm -f "$local_file"
+            local_file="${local_file%.age}"
+            ;;
+    esac
+    printf '%s' "$local_file"
+}
+
+database_exists() {
+    # Pela entrada padrão (o -c não substitui variáveis): :'name' vira texto escapado pelo psql.
+    [ "$(printf '%s\n' "SELECT 1 FROM pg_database WHERE datname = :'name';" | psql -X -At -d postgres -v name="$1")" = "1" ]
+}
+
+# ------------------------------------------------------------------ restore
+
+cmd_restore() {
+    local db="" which="latest" target="" yes=false
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --into) target="${2:-}"; shift 2 ;;
+            --yes | -y) yes=true; shift ;;
+            -*) die "opção desconhecida: $1" ;;
+            *) if [ -z "$db" ]; then db="$1"; else which="$1"; fi; shift ;;
+        esac
+    done
+    [ -n "$db" ] || die "uso: arca restore <banco> [arquivo|latest] [--into <destino>] [--yes]"
+    target="${target:-$db}"
+    require_name "$db"
+    require_name "$target"
+    [ "$which" = "latest" ] || require_name "$(basename "$which")"
+
+    setup_storage
+    new_work_dir
+    local file
+    file="$(fetch_backup "$db" "$which")"
+    pg_restore --list "$file" > /dev/null || die "o arquivo baixado não é um backup válido"
+
+    if database_exists "$target"; then
+        $yes || die "o banco '$target' já existe e seria SOBRESCRITO. Repita com --yes (ou use --into <outro_nome>)"
+        log "Restaurando em '$target' (existente: objetos do backup serão recriados)"
+    else
+        log "Criando o banco '$target'"
+        createdb "$target"
+    fi
+
+    local owner_args=""
+    is_true "${RESTORE_NO_OWNER:-false}" && owner_args="--no-owner --no-privileges"
+    # shellcheck disable=SC2086
+    pg_restore --dbname="$target" --clean --if-exists --single-transaction --exit-on-error $owner_args "$file" ||
+        die "restauração falhou - nada foi alterado (transação desfeita)"
+    log "Restaurado: $db ($which) -> $target"
+}
+
+# ------------------------------------------------------------------ verify
+
+cmd_verify() {
+    local full=false dbs="" arg
+    for arg in "$@"; do
+        case "$arg" in
+            --full) full=true ;;
+            *) require_name "$arg"; dbs="$dbs $arg" ;;
+        esac
+    done
+    setup_storage
+    new_work_dir
+    [ -n "$dbs" ] || dbs="$(list_databases)"
+
+    local db file entries failures=0
+    for db in $dbs; do
+        if ! file="$(fetch_backup "$db" latest)"; then failures=$((failures + 1)); continue; fi
+        if ! entries="$(pg_restore --list "$file" | grep -vc '^;')"; then
+            warn "$db: arquivo não abre"; failures=$((failures + 1)); continue
+        fi
+        log "$db: OK ($entries objetos, $(human_size "$(wc -c < "$file" | tr -d ' ')"))"
+        if $full; then
+            local temp
+            temp="arca_verify_$(date +%s)"
+            createdb "$temp"
+            if pg_restore --dbname="$temp" --no-owner --no-privileges --single-transaction --exit-on-error "$file"; then
+                log "$db: restauração de teste OK (banco temporário $temp)"
+            else
+                warn "$db: restauração de teste FALHOU"; failures=$((failures + 1))
+            fi
+            dropdb --if-exists "$temp"
+        fi
+        rm -f "$file"
+    done
+    [ "$failures" -eq 0 ] || die "$failures verificação(ões) falharam"
+    log "Verificação concluída"
+}
+
+# ------------------------------------------------------------------ prune
+
+prune_old() {
+    local days="${BACKUP_RETENTION_DAYS:-0}" keep="${BACKUP_KEEP_MIN:-3}" min_days folder old all name
+    [ "$days" -gt 0 ] 2>/dev/null || { log "BACKUP_RETENTION_DAYS não definido: nada a apagar"; return 0; }
+    min_days="$(min_days_for_class "${STORAGE_CLASS:-}")"
+    if [ "$days" -lt "$min_days" ]; then
+        warn "a classe ${STORAGE_CLASS} cobra no mínimo ${min_days} dias: apagar com ${days} dias não economiza"
+    fi
+    log "Apagando backups com mais de ${days} dias (mantendo os ${keep} mais novos de cada banco)"
+    for folder in $(rc lsf --dirs-only "$(base_remote)" 2>/dev/null | tr -d '/'); do
+        all="$(rc lsf --files-only "$(base_remote)/$folder" | sort)"
+        old="$(rc lsf --files-only --min-age "${days}d" "$(base_remote)/$folder" | sort)"
+        # Os `keep` mais novos nunca saem, mesmo que velhos (ex.: o backup parou de rodar).
+        local protected
+        protected="$(printf '%s\n' "$all" | sed '/^$/d' | tail -n "$keep")"
+        for name in $old; do
+            if printf '%s\n' "$protected" | grep -qxF "$name"; then continue; fi
+            rc deletefile "$(base_remote)/$folder/$name"
+            log "  apagado: $folder/$name"
+        done
+    done
+}
+
+cmd_prune() {
+    setup_storage
+    new_work_dir
+    prune_old
+}
+
+# ------------------------------------------------------------------ check
+
+cmd_check() {
+    setup_storage
+    new_work_dir
+    log "arca $ARCA_VERSION"
+    log "Postgres: $PGUSER@$PGHOST:$PGPORT ($(pg_dump --version))"
+    psql -X -At -d postgres -c "SELECT 'servidor: ' || version()" | sed 's/^/  /' || die "não conectou no Postgres"
+    log "Bancos: $(list_databases | tr '\n' ' ')"
+    log "Armazenamento: $STORAGE_PROVIDER -> $(base_remote) ${STORAGE_CLASS:+(classe $STORAGE_CLASS)}"
+    local probe="$WORK_DIR/.arca-check"
+    date > "$probe"
+    rc copyto "$probe" "$(base_remote)/.arca-check" || die "não consegui GRAVAR no armazenamento"
+    rc cat "$(base_remote)/.arca-check" > /dev/null || die "não consegui LER do armazenamento"
+    rc deletefile "$(base_remote)/.arca-check" || warn "não consegui apagar o arquivo de teste (credencial sem permissão de apagar? tudo bem se a retenção for por regra do bucket)"
+    if encryption_enabled; then
+        printf 'teste' | encrypt_stream > /dev/null || die "BACKUP_ENCRYPTION_RECIPIENTS inválido"
+        log "Criptografia: ligada (age)"
+    else
+        warn "Criptografia: DESLIGADA"
+    fi
+    log "Agenda: ${BACKUP_SCHEDULE:-0 3 * * *} (TZ=${TZ:-UTC}); retenção: ${BACKUP_RETENTION_DAYS:-0} dias"
+    log "Tudo certo."
+}
+
+# ------------------------------------------------------------------ cron (container)
+
+cmd_cron() {
+    local schedule="${BACKUP_SCHEDULE:-0 3 * * *}"
+    # Confere tudo antes de agendar: configuração errada aparece na subida, não às 3h.
+    "$0" check
+    # O crond não repassa o ambiente do container para o job: salvo só o que o arca usa, num
+    # arquivo legível apenas pelo root.
+    local env_file=/run/arca.env
+    (umask 077 && export -p | grep -E '^(declare -x|export) (PG|STORAGE_|BACKUP_|RCLONE_|AGE_|AWS_|HEALTHCHECK_URL|TZ|ARCA_|PG_DUMP_)' > "$env_file")
+    mkdir -p /etc/crontabs
+    # O crond roda o job com sh (ash); o arquivo de ambiente usa a sintaxe do bash.
+    printf "%s bash -c '. %s; exec %s backup' > /proc/1/fd/1 2>&1\n" "$schedule" "$env_file" "$ARCA_HOME/arca" > /etc/crontabs/root
+    log "Agendado: '$schedule' (TZ=${TZ:-UTC})"
+    if is_true "${BACKUP_ON_STARTUP:-false}"; then
+        "$0" backup || true
+    fi
+    exec crond -f -l 8
+}
+
+# ------------------------------------------------------------------ main
+
+command="${1:-help}"
+[ $# -gt 0 ] && shift
+case "$command" in
+    backup) cmd_backup ;;
+    list | ls) cmd_list "$@" ;;
+    restore) cmd_restore "$@" ;;
+    verify) cmd_verify "$@" ;;
+    prune) cmd_prune ;;
+    check) cmd_check ;;
+    cron) cmd_cron ;;
+    help | -h | --help) usage ;;
+    version | --version) echo "arca $ARCA_VERSION" ;;
+    *) usage; exit 1 ;;
+esac

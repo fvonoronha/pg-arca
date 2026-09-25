@@ -1,0 +1,19 @@
+# Exemplo: o arca na mesma rede do Postgres, fazendo backup todo dia às 3h.
+#   docker compose up -d                         (sobe no modo agendado)
+#   docker compose run --rm arca backup          (backup agora)
+#   docker compose run --rm arca list            (lista)
+#   docker compose run --rm -e AGE_IDENTITY_FILE=/chave.txt -v ./chave.txt:/chave.txt:ro \
+#       arca restore meu_banco --into meu_banco_restaurado
+services:
+  arca:
+    image: ghcr.io/fvonoronha/pg-arca:pg17
+    # build: { context: ., args: { PG_MAJOR: "16" } }
+    env_file: .env
+    restart: unless-stopped
+    networks: [banco]
+
+networks:
+  banco:
+    external: true
+    # nome da rede onde o Postgres está
+    name: rede-do-postgres
