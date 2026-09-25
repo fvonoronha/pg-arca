@@ -155,7 +155,9 @@ Exemplo: 50 MB por dia, guardados por 90 dias, dão cerca de **US$ 0,02 por mês
 
 ## 🔐 Segurança
 
-**1. Credencial que não consegue apagar.** Dê ao backup só estas permissões. Mesmo quem invadir o servidor não consegue destruir seus backups:
+**1. Credencial que não consegue apagar.** Dê ao backup só estas permissões. Mesmo quem invadir o servidor não consegue destruir seus backups.
+
+Esta é uma política de **IAM**: vá em IAM → *Policies* → *Create policy* → aba JSON, e depois anexe a política a um usuário só para o backup (*Users* → *Create user*). Não cole na *Bucket policy* do S3: lá o JSON exige `Principal` e dá o erro *"Missing required field Principal"*.
 
 ```json
 {
