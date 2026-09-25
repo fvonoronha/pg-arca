@@ -35,6 +35,17 @@ read_secret() {
 valid_name() { printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$'; }
 require_name() { valid_name "$1" || die "nome inválido: '$1' (use letras, números, _ . -)"; }
 
+# Chaves de acesso nunca têm espaço, quebra de linha ou aspas: vindos do copiar/colar ou do .env
+# (KEY="valor" vira valor COM aspas em vários orquestradores), quebrariam a assinatura da AWS
+# ("SignatureDoesNotMatch") sem nenhuma pista. Só para credenciais de armazenamento; a senha do
+# Postgres pode ter qualquer caractere.
+clean_key() {
+    local value
+    value="$(printf '%s' "$1" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    case "$value" in \"*\" | \'*\') value="${value:1:${#value}-2}" ;; esac
+    printf '%s' "$value"
+}
+
 is_true() { case "${1:-}" in true | TRUE | True | 1 | yes | sim) return 0 ;; *) return 1 ;; esac }
 
 # ------------------------------------------------------------------ Postgres
@@ -91,8 +102,8 @@ min_days_for_class() {
 # arquivo de configuração com credenciais no disco.
 setup_storage() {
     local key secret
-    key="$(read_secret STORAGE_ACCESS_KEY_ID)"
-    secret="$(read_secret STORAGE_SECRET_ACCESS_KEY)"
+    key="$(clean_key "$(read_secret STORAGE_ACCESS_KEY_ID)")"
+    secret="$(clean_key "$(read_secret STORAGE_SECRET_ACCESS_KEY)")"
 
     case "$STORAGE_PROVIDER" in
         aws | r2 | s3)

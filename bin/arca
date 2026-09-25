@@ -280,6 +280,24 @@ cmd_prune() {
 
 # ------------------------------------------------------------------ check
 
+# Traduz os erros mais comuns do S3 numa dica do que conferir.
+storage_hint() {
+    local err="$1"
+    if grep -q "SignatureDoesNotMatch" "$err"; then
+        warn "A chave SECRETA (STORAGE_SECRET_ACCESS_KEY) não confere com a access key. Confira se foi copiada inteira (40 caracteres), sem espaço/aspas, e se é do mesmo par do STORAGE_ACCESS_KEY_ID."
+    elif grep -q "InvalidAccessKeyId" "$err"; then
+        warn "STORAGE_ACCESS_KEY_ID não existe (ou foi desativada) nesta conta."
+    elif grep -q "AccessDenied" "$err"; then
+        warn "Acesso negado: confira a política de IAM (bucket e prefixo '$STORAGE_PREFIX/') e se ela está anexada ao usuário."
+    elif grep -qE "PermanentRedirect|AuthorizationHeaderMalformed|IllegalLocationConstraint" "$err"; then
+        warn "Região errada: STORAGE_REGION precisa ser a região do bucket."
+    elif grep -q "NoSuchBucket" "$err"; then
+        warn "O bucket '$STORAGE_BUCKET' não existe (ou está em outra conta)."
+    elif grep -q "InvalidStorageClass" "$err"; then
+        warn "Este serviço não aceita STORAGE_CLASS=$STORAGE_CLASS."
+    fi
+}
+
 cmd_check() {
     setup_storage
     new_work_dir
@@ -290,7 +308,11 @@ cmd_check() {
     log "Armazenamento: $STORAGE_PROVIDER -> $(base_remote) ${STORAGE_CLASS:+(classe $STORAGE_CLASS)}"
     local probe="$WORK_DIR/.arca-check"
     date > "$probe"
-    upload "$probe" "$(base_remote)/.arca-check" || die "não consegui GRAVAR no armazenamento"
+    if ! upload "$probe" "$(base_remote)/.arca-check" 2> "$WORK_DIR/upload.err"; then
+        cat "$WORK_DIR/upload.err" >&2
+        storage_hint "$WORK_DIR/upload.err"
+        die "não consegui GRAVAR no armazenamento"
+    fi
     rc cat "$(base_remote)/.arca-check" > /dev/null || die "não consegui LER do armazenamento"
     rc deletefile "$(base_remote)/.arca-check" || warn "não consegui apagar o arquivo de teste (credencial sem permissão de apagar? tudo bem se a retenção for por regra do bucket)"
     if encryption_enabled; then
