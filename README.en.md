@@ -67,7 +67,7 @@ arca verify [db] [--full] | prune | check
 
 ## Which S3 tier?
 
-**`GLACIER_IR` with 90+ days retention.** It costs about 6 times less than Standard (around $0.004 per GB-month) and still restores **instantly**. Deep Archive is cheaper, but it takes 12 to 48 hours to restore. Note that objects are billed for at least 90 days. The full table, a least-privilege IAM policy (no delete permission) and the lifecycle rule are in the [Portuguese README](README.md#-qual-tier-usar-aws-s3).
+**`GLACIER_IR` with 90+ days retention.** It costs about 6 times less than Standard (around $0.004 per GB-month) and still restores **instantly**. Deep Archive is cheaper, but it takes 12 to 48 hours to restore. Note that objects are billed for at least 90 days. The full table, a least-privilege IAM policy (no delete permission; create it under IAM → Policies, not as a bucket policy) and the lifecycle rule are in the [Portuguese README](README.md#-qual-tier-usar-aws-s3).
 
 ## Restore
 
