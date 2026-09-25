@@ -2,6 +2,11 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.0.1] - 2026-09-25
+
+### Corrigido
+- Envio para a AWS S3 com a credencial mínima recomendada (ListBucket restrito ao prefixo): o rclone perguntava se o arquivo já existia, a AWS respondia 403 e o backup falhava. O envio não faz mais essa pergunta.
+
 ## [1.0.0] - 2026-09-25
 
 Primeira versão.
