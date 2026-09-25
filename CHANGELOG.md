@@ -2,6 +2,14 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.0.2] - 2026-09-25
+
+### Corrigido
+- Chaves de armazenamento com espaço, quebra de linha ou aspas em volta (comum ao copiar/colar ou em `.env` com `KEY="valor"`) quebravam a assinatura da AWS (`SignatureDoesNotMatch`). Agora são limpas.
+
+### Melhorado
+- `check` explica os erros mais comuns do S3 (chave secreta, access key, permissão, região, bucket, classe).
+
 ## [1.0.1] - 2026-09-25
 
 ### Corrigido
