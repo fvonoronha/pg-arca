@@ -39,7 +39,15 @@ docker network create "$NET" > /dev/null
 docker run -d --name "$PG" --network "$NET" -e POSTGRES_PASSWORD=segredo "postgres:${PG_MAJOR}-alpine" > /dev/null
 docker run -d --name "$S3" --network "$NET" --entrypoint rclone "$IMAGE" \
     serve s3 /data --addr :9000 --auth-key chave,segredo-s3 > /dev/null
-for _ in $(seq 1 60); do docker exec "$PG" pg_isready -U postgres > /dev/null 2>&1 && break; sleep 1; done
+# A imagem oficial sobe o Postgres uma vez para inicializar, desliga e sobe de novo: esperar a
+# mensagem do fim da inicialização, senão o teste pode pegar o servidor "shutting down".
+for _ in $(seq 1 90); do
+    if docker logs "$PG" 2>&1 | grep -q "PostgreSQL init process complete" &&
+        docker exec "$PG" pg_isready -U postgres > /dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
 docker exec "$PG" psql -U postgres -q -c "CREATE DATABASE loja" \
     -c "CREATE ROLE app LOGIN PASSWORD 'x'"
 docker exec "$PG" psql -U postgres -d loja -q \
