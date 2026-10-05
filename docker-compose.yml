@@ -6,7 +6,7 @@
 #       arca restore meu_banco --into meu_banco_restaurado
 services:
   arca:
-    image: ghcr.io/fvonoronha/pg-arca:pg17
+    image: ghcr.io/fvonoronha/pg-arca:pg18
     # build: { context: ., args: { PG_MAJOR: "16" } }
     env_file: .env
     restart: unless-stopped
