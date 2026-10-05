@@ -8,7 +8,7 @@
 
 set -o errexit -o nounset -o pipefail
 
-PG_MAJOR="${PG_MAJOR:-17}"
+PG_MAJOR="${PG_MAJOR:-18}"
 IMAGE="pg-arca:test-pg${PG_MAJOR}"
 NET="arca-test-$$"
 PG="arca-pg-$$"

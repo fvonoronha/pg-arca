@@ -1,7 +1,7 @@
 # O pg_dump precisa ser da MESMA versão maior do servidor (um pg_dump mais novo gera comandos que
 # o servidor antigo não entende na hora de restaurar). Gere uma imagem por versão:
 #   docker build --build-arg PG_MAJOR=16 -t pg-arca:pg16 .
-ARG PG_MAJOR=17
+ARG PG_MAJOR=18
 FROM postgres:${PG_MAJOR}-alpine
 
 ARG ARCA_VERSION=dev

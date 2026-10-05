@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        pg: ["15", "16", "17"]
+        pg: ["15", "16", "17", "18"]
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -35,7 +35,7 @@ jobs:
             VERSION="${{ github.event.release.tag_name }}"
             TAGS="$IMAGE:pg${{ matrix.pg }},$IMAGE:${VERSION}-pg${{ matrix.pg }}"
             # latest = Postgres mais novo
-            [ "${{ matrix.pg }}" = "17" ] && TAGS="$TAGS,$IMAGE:latest,$IMAGE:${VERSION}"
+            [ "${{ matrix.pg }}" = "18" ] && TAGS="$TAGS,$IMAGE:latest,$IMAGE:${VERSION}"
           else
             VERSION="dev"
             TAGS="$IMAGE:dev-pg${{ matrix.pg }}"

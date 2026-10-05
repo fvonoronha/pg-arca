@@ -2,6 +2,11 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.1.0] - 2026-10-04
+
+### Adicionado
+- Imagem para PostgreSQL 18 (`pg18`), que passa a ser a `latest`. O `pg_dump` 17 recusa servidores 18 ("server version mismatch").
+
 ## [1.0.3] - 2026-09-25
 
 ### Melhorado
